@@ -5,9 +5,43 @@ class PS_PolyZoneHUDControllerClass: ScriptComponentClass
 class PS_PolyZoneHUDController: ScriptComponent
 {
 	protected PS_PolyZoneHUD m_PolyZoneHUD;
-			
+	protected ref PS_EffectsContainer m_pPreviousEffects;
+
+	/**
+	 * @brief Сравнение списков эффектов полизоны для предотвращения избыточных RPC
+	 * @issue BUG-53
+	 * @cause Сервер каждые 100мс отправлял Rpc(ShowEffects) даже при отсутствии изменений
+	 * @solution Сравнение по составу эффектов, типам и строковым параметрам
+	 */
+	protected bool AreEffectsEqual(PS_EffectsContainer a, PS_EffectsContainer b)
+	{
+		if (!a && !b)
+			return true;
+		if (!a || !b)
+			return false;
+		if (a.m_aEffects.Count() != b.m_aEffects.Count())
+			return false;
+
+		int count = a.m_aEffects.Count();
+		for (int i = 0; i < count; i++)
+		{
+			PS_EffectContainer ea = a.m_aEffects[i];
+			PS_EffectContainer eb = b.m_aEffects[i];
+			if (!ea && !eb)
+				continue;
+			if (!ea || !eb)
+				return false;
+			if (ea.m_iId != eb.m_iId || ea.m_iType != eb.m_iType || ea.m_sString != eb.m_sString)
+				return false;
+		}
+		return true;
+	}
+
 	void UpdatePlayerHUD(IEntity owner)
 	{
+		if (!owner)
+			return;
+
 		SCR_PlayerController playerController = SCR_PlayerController.Cast(owner);
 		if (!playerController)
 			return;
@@ -15,14 +49,22 @@ class PS_PolyZoneHUDController: ScriptComponent
 		IEntity character = playerController.GetControlledEntity();
 		if (!character)
 		{
-			Rpc(ShowEffects, new PS_EffectsContainer());
+			if (m_pPreviousEffects && !m_pPreviousEffects.m_aEffects.IsEmpty())
+			{
+				m_pPreviousEffects = new PS_EffectsContainer();
+				Rpc(ShowEffects, m_pPreviousEffects);
+			}
 			return;
 		}
 		
 		PS_PolyZoneEffectHandler polyZoneEffectHandler = PS_PolyZoneEffectHandler.Cast(character.FindComponent(PS_PolyZoneEffectHandler));
 		if (!polyZoneEffectHandler)
 		{
-			Rpc(ShowEffects, new PS_EffectsContainer());
+			if (m_pPreviousEffects && !m_pPreviousEffects.m_aEffects.IsEmpty())
+			{
+				m_pPreviousEffects = new PS_EffectsContainer();
+				Rpc(ShowEffects, m_pPreviousEffects);
+			}
 			return;
 		}
 		
@@ -30,10 +72,26 @@ class PS_PolyZoneHUDController: ScriptComponent
 		PS_EffectsContainer effectsContainer = new PS_EffectsContainer();
 		foreach (PS_PolyZoneTrigger trigger, PS_PolyZoneEffect effect : polyZoneEffectHandler.m_mapPolyZoneEffects)
 		{
-			effectsContainer.m_aEffects.Insert(effect.GetEffectContainer());
+			if (effect)
+				effectsContainer.m_aEffects.Insert(effect.GetEffectContainer());
 		}
+
+		if (m_pPreviousEffects == null)
+		{
+			if (effectsContainer.m_aEffects.IsEmpty())
+			{
+				m_pPreviousEffects = effectsContainer;
+				return;
+			}
+		}
+		else if (AreEffectsEqual(effectsContainer, m_pPreviousEffects))
+		{
+			return;
+		}
+
+		m_pPreviousEffects = effectsContainer;
 		// Update on client side
-		Rpc(ShowEffects, effectsContainer)
+		Rpc(ShowEffects, effectsContainer);
 	}
 	[RplRpc(RplChannel.Reliable, RplRcver.Owner)]
 	protected void ShowEffects(PS_EffectsContainer effectsContainer)
@@ -69,6 +127,12 @@ class PS_PolyZoneHUDController: ScriptComponent
 		
 		if (Replication.IsServer())
 			GetGame().GetCallqueue().CallLater(UpdatePlayerHUD, 100, true, owner);
+	}
+
+	override void OnDelete(IEntity owner)
+	{
+		GetGame().GetCallqueue().Remove(UpdatePlayerHUD);
+		super.OnDelete(owner);
 	}
 }
 class PS_EffectsContainer

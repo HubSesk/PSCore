@@ -366,6 +366,33 @@ class PS_ManualMarker : GenericEntity
 		// Enable init event
 		SetEventMask(EntityEvent.INIT);
 	}
+
+	/**
+	 * @brief Отписка от инвокеров карты и удаление виджета при удалении маркера
+	 * @issue BUG-64
+	 * @cause Отсутствие деструктора приводило к вызову CreateMapWidget/DeleteMapWidget на удалённом объекте и утечке m_wRoot
+	 * @solution Отписка от onMapOpen/onMapClose и удаление m_wRoot из иерархии в деструкторе
+	 */
+	void ~PS_ManualMarker()
+	{
+		if (m_wRoot)
+		{
+			m_wRoot.RemoveFromHierarchy();
+			m_wRoot = null;
+		}
+		m_hManualMarkerComponent = null;
+
+		if (m_MapEntity)
+		{
+			ScriptInvokerBase<MapConfigurationInvoker> onMapOpen = m_MapEntity.GetOnMapOpen();
+			if (onMapOpen)
+				onMapOpen.Remove(CreateMapWidget);
+
+			ScriptInvokerBase<MapConfigurationInvoker> onMapClose = m_MapEntity.GetOnMapClose();
+			if (onMapClose)
+				onMapClose.Remove(DeleteMapWidget);
+		}
+	}
 	
 	// JIP Replication
 	override bool RplSave(ScriptBitWriter writer)
