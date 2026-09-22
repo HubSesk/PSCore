@@ -31,7 +31,7 @@ sealed class PS_Notify
 			return;
 		}
 		
-		string guid = GetGame().GetBackendApi().GetLocalIdentityId();
+		string guid = BackendAuthenticatorApi.GetIdentityId();
 		if (guid.Length() <= 0)
 		{
 			GetGame().GetCallqueue().CallLater(NotifyOurFriends, 5000, false);
