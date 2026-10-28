@@ -48,12 +48,24 @@ class PS_ManualMarker : GenericEntity
 	[Attribute("")]
 	bool m_bShowForAnyFaction;
 	
+	[Attribute("false", desc: "Track the parent inventory item; requires an independent, non-streamable RplComponent.")]
+	protected bool m_bTrackInventory;
+
 	// Internal variables
 	Widget m_wRoot;
 	SCR_MapEntity m_MapEntity;
 	PS_ManualMarkerComponent m_hManualMarkerComponent;
 	protected ResourceName m_sMarkerPrefab = "{52CA8FF5F56C6F31}UI/layouts/Map/ManualMapMarkerBase.layout";
 	
+	[RplProp()]
+	protected vector m_vServerPos;
+
+	[RplProp()]
+	protected float m_fServerYaw;
+
+	[RplProp()]
+	protected bool m_bHasServerPos;
+
 	// Get/Set Broadcast
 	// Setters must be call from autority (usualy server)
 	string GetImageSet()
@@ -215,6 +227,7 @@ class PS_ManualMarker : GenericEntity
 		if (m_bShowForAnyFaction) return true;
 		return m_aVisibleForFactions.Contains(factionKey);
 	}
+
 	void SetVisibleForFaction(Faction faction, bool visible)
 	{
 		RPC_SetVisibleForFaction_ByKey(faction.GetFactionKey(), visible);
@@ -241,14 +254,20 @@ class PS_ManualMarker : GenericEntity
 	}
 	
 	// Self functions
-	override protected void EOnPostFrame(IEntity owner, float timeSlice)
+	protected void UpdateMapWidget()
 	{
-		if (!m_wRoot)
+		if (!m_wRoot || !m_MapEntity)
 			return;
 		
 		// Get screen position
 		float wX, wY, screenX, screenY, screenXEnd, screenYEnd;
+		float trackedYaw = GetYawPitchRoll()[0];
 		vector worldPosition = GetOrigin();
+		if (m_bHasServerPos)
+		{
+			worldPosition = m_vServerPos;
+			trackedYaw = m_fServerYaw;
+		}
 		wX = worldPosition[0];
 		wY = worldPosition[2];
 		m_MapEntity.WorldToScreen(wX, wY, screenX, screenY, true);
@@ -268,7 +287,7 @@ class PS_ManualMarker : GenericEntity
 		
 		// Update widget
 		// Since every default direction marcers turned to right, -90° added to entity rotation
-		m_hManualMarkerComponent.SetSlot(screenXD, screenYD, sizeXD, sizeYD, GetYawPitchRoll()[0] - 90);
+		m_hManualMarkerComponent.SetSlot(screenXD, screenYD, sizeXD, sizeYD, trackedYaw - 90);
 	}
 	
 	override protected void EOnInit(IEntity owner)
@@ -276,13 +295,25 @@ class PS_ManualMarker : GenericEntity
 		if (m_aVisibleForFactions == null)
 			m_aVisibleForFactions = new array<FactionKey>();
 		
+		if (m_bTrackInventory && Replication.IsServer())
+		{
+			GetGame().GetCallqueue().CallLater(UpdateTrackedPosition_S, 0, false);
+			GetGame().GetCallqueue().CallLater(UpdateTrackedPosition_S, 1000, true);
+		}
+
 		m_MapEntity = SCR_MapEntity.GetMapInstance();
+		if (!m_MapEntity)
+			return;
+
 		ScriptInvokerBase<MapConfigurationInvoker> onMapOpen = m_MapEntity.GetOnMapOpen();
 		ScriptInvokerBase<MapConfigurationInvoker> onMapClose = m_MapEntity.GetOnMapClose();
 		
 		// Every time map open/close add/remove widget
 		onMapOpen.Insert(CreateMapWidget);
 		onMapClose.Insert(DeleteMapWidget);
+
+		// Wait until derived marker classes have completed initialization.
+		GetGame().GetCallqueue().CallLater(CreateMapWidgetIfOpen_C, 0, false);
 	}
 	
 	bool IsCurrentFactionVisibility()
@@ -343,7 +374,7 @@ class PS_ManualMarker : GenericEntity
 		m_hManualMarkerComponent.OnMouseLeave(null, null, 0, 0);
 		
 		// Enable every frame updating
-		SetEventMask(EntityEvent.POSTFRAME);
+		GetGame().GetCallqueue().CallLater(UpdateMapWidget, 0, true);
 	}
 	
 	// Delete map widget
@@ -358,7 +389,8 @@ class PS_ManualMarker : GenericEntity
 		m_hManualMarkerComponent = null;
 		
 		// Disable every frame updating
-		ClearEventMask(EntityEvent.POSTFRAME);
+		if (GetGame())
+			GetGame().GetCallqueue().Remove(UpdateMapWidget);
 	}
 	
 	void PS_ManualMarker(IEntitySource src, IEntity parent)
@@ -375,6 +407,14 @@ class PS_ManualMarker : GenericEntity
 	 */
 	void ~PS_ManualMarker()
 	{
+		if (GetGame())
+		{
+			GetGame().GetCallqueue().Remove(UpdateTrackedPosition_S);
+			GetGame().GetCallqueue().Remove(UpdateMapWidget);
+			GetGame().GetCallqueue().Remove(CreateMapWidgetIfOpen_C);
+			GetGame().GetCallqueue().Remove(FactionsInit);
+		}
+
 		if (m_wRoot)
 		{
 			m_wRoot.RemoveFromHierarchy();
@@ -394,6 +434,42 @@ class PS_ManualMarker : GenericEntity
 		}
 	}
 	
+	// The server has the inventory hierarchy even when the item is absent on clients.
+	protected void UpdateTrackedPosition_S()
+	{
+		if (!Replication.IsServer())
+			return;
+
+		IEntity item = GetParent();
+		if (!item || item.IsDeleted())
+			return;
+
+		InventoryItemComponent inventoryItem = InventoryItemComponent.Cast(item.FindComponent(InventoryItemComponent));
+		if (!inventoryItem)
+			return;
+
+		IEntity carrier = item;
+		InventoryStorageSlot slot = inventoryItem.GetParentSlot();
+		if (slot && slot.GetOwner())
+			carrier = slot.GetOwner().GetRootParent();
+
+		vector position = carrier.GetOrigin();
+		float yaw = carrier.GetYawPitchRoll()[0];
+		if (m_bHasServerPos && position == m_vServerPos && yaw == m_fServerYaw)
+			return;
+
+		m_vServerPos = position;
+		m_fServerYaw = yaw;
+		m_bHasServerPos = true;
+		Replication.BumpMe();
+	}
+
+	protected void CreateMapWidgetIfOpen_C()
+	{
+		if (m_MapEntity && m_MapEntity.IsOpen() && m_MapEntity.GetMapMenuRoot())
+			CreateMapWidget(m_MapEntity.GetMapConfig());
+	}
+
 	// JIP Replication
 	override bool RplSave(ScriptBitWriter writer)
 	{
@@ -449,5 +525,6 @@ class PS_ManualMarker : GenericEntity
 			if (faction)
 				m_aVisibleForFactions.Insert(faction.GetFactionKey());
 		}
+		CreateMapWidgetIfOpen_C();
 	}
 }

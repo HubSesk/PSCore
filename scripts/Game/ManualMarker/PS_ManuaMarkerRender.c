@@ -9,8 +9,8 @@ class PS_ManuaMarkerRender : PS_ManualMarker
 	
 	override protected void EOnInit(IEntity owner)
 	{
-		super.EOnInit(owner);
 		m_sMarkerPrefab = "{4EE4EBD5EC3C0999}UI/Map/ManualMapMarkerRender.layout";
+		super.EOnInit(owner);
 	}
 	
 	override void CreateMapWidget(MapConfiguration mapConfig)
