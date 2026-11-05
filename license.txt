@@ -1,0 +1,42 @@
+# Disclaimer and License
+All computer programs and software included in this distribution are provided "as is", without any warranties of any kind.
+We make no express or implied warranties that the software:
+
+is free of errors,
+
+conforms to any particular standard of merchantability,
+
+or will meet your requirements for any specific purpose.
+
+This software must not be used in situations where errors could result in personal injury or property damage.
+If you choose to use it in such scenarios, you do so at your own risk.
+
+The author and publisher disclaim all liability for any direct, indirect, or consequential damages resulting from the use of the software.
+
+By downloading and using Slower Strafe for Arma Reforger by Bohemia Interactive, you agree to the terms outlined in this license.
+
+This license is derived from the Arma Public License No Derivatives (APL-ND) and is extended with the following additional terms:
+
+# Monetization
+We have a strict no-monetization policy regarding PSCore for Arma Reforger.
+
+Any exchange of money for in-game benefits is considered a violation of the non-commercial clause of the APL-ND.
+
+Examples of prohibited monetization practices include (but are not limited to):
+
+Charging players for access or priority to connect to a server.
+
+Charging for in-game perks (cosmetic or otherwise).
+
+Selling in-game items, in-game currency, or experience points.
+
+Incorporating product placement or brand endorsements.
+
+Setting donation goals that unlock in-game benefits (perks, items, or currency).
+
+# Limitations
+Due to repeated violations of the PSCore EULA and/or Bohemia Interactive’s Terms of Service, the following individuals and groups are strictly prohibited from using this mod or creating any derivative content based on PSCore or any other versions of our mod:
+
+- ECHO | SERIOUS GAMES IN ARMA and/or any affiliated persons.
+- TACTICAL WARFARE UA and/or any affiliated persons.
+- [AS] SoliD and/or any affiliated projects.
