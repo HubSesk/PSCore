@@ -73,8 +73,50 @@ class PS_PolyZone : ScriptComponent
 		return m_aVisibleForFactions.Contains(factionKey);
 	}
 	
+	protected static ref array<PS_PolyZone> s_aInstances = {};
+	protected static BaseWorld s_RegistryWorld;
+
+	//! Returns active PS_PolyZone instances in the current world (used by external observers such as replay).
+	static void GetInstances(notnull array<PS_PolyZone> outInstances)
+	{
+		outInstances.Clear();
+		if (!s_aInstances)
+			return;
+
+		BaseWorld currentWorld = GetGame().GetWorld();
+		foreach (PS_PolyZone instance : s_aInstances)
+		{
+			if (!instance)
+				continue;
+
+			IEntity owner = instance.GetOwner();
+			if (!owner || (currentWorld && owner.GetWorld() != currentWorld))
+				continue;
+
+			outInstances.Insert(instance);
+		}
+	}
+
+	protected void RegisterInstance(IEntity owner)
+	{
+		if (!owner)
+			return;
+
+		BaseWorld world = owner.GetWorld();
+		if (world && world != s_RegistryWorld)
+		{
+			s_aInstances.Clear();
+			s_RegistryWorld = world;
+		}
+
+		if (!s_aInstances.Contains(this))
+			s_aInstances.Insert(this);
+	}
+
 	override void OnPostInit(IEntity owner)
 	{
+		RegisterInstance(owner);
+
 		m_MapEntity = SCR_MapEntity.GetMapInstance();
 		ScriptInvokerBase<MapConfigurationInvoker> onMapOpen = m_MapEntity.GetOnMapOpen();
 		ScriptInvokerBase<MapConfigurationInvoker> onMapClose = m_MapEntity.GetOnMapClose();
@@ -218,6 +260,20 @@ class PS_PolyZone : ScriptComponent
 				m_LinePolygon.m_Vertices.Insert(screenY);
 			}
 		}
+	}
+
+	override void OnDelete(IEntity owner)
+	{
+		if (s_aInstances)
+			s_aInstances.RemoveItem(this);
+
+		super.OnDelete(owner);
+	}
+
+	void ~PS_PolyZone()
+	{
+		if (s_aInstances)
+			s_aInstances.RemoveItem(this);
 	}
 }
 
