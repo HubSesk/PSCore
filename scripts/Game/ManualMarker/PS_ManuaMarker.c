@@ -57,14 +57,63 @@ class PS_ManualMarker : GenericEntity
 	PS_ManualMarkerComponent m_hManualMarkerComponent;
 	protected ResourceName m_sMarkerPrefab = "{52CA8FF5F56C6F31}UI/layouts/Map/ManualMapMarkerBase.layout";
 	
-	[RplProp()]
+	[RplProp(onRplName: "OnRpl_ServerPos")]
 	protected vector m_vServerPos;
 
-	[RplProp()]
+	[RplProp(onRplName: "OnRpl_ServerPos")]
 	protected float m_fServerYaw;
 
-	[RplProp()]
+	[RplProp(onRplName: "OnRpl_ServerPos")]
 	protected bool m_bHasServerPos;
+
+	protected static ref array<PS_ManualMarker> s_aInstances = {};
+	protected static BaseWorld s_RegistryWorld;
+
+	//! Returns active PS_ManualMarker instances in the current world (used by external observers such as replay).
+	static void GetInstances(notnull array<PS_ManualMarker> outInstances)
+	{
+		outInstances.Clear();
+		if (!s_aInstances)
+			return;
+
+		BaseWorld currentWorld = GetGame().GetWorld();
+		foreach (PS_ManualMarker instance : s_aInstances)
+		{
+			if (!instance || instance.IsDeleted())
+				continue;
+
+			if (currentWorld && instance.GetWorld() != currentWorld)
+				continue;
+
+			outInstances.Insert(instance);
+		}
+	}
+
+	protected void RegisterInstance()
+	{
+		BaseWorld world = GetWorld();
+		if (world && world != s_RegistryWorld)
+		{
+			s_aInstances.Clear();
+			s_RegistryWorld = world;
+		}
+
+		if (!s_aInstances.Contains(this))
+			s_aInstances.Insert(this);
+	}
+
+	void GetWorldPosAndYaw(out vector pos, out float yaw)
+	{
+		if (m_bHasServerPos)
+		{
+			pos = m_vServerPos;
+			yaw = m_fServerYaw;
+			return;
+		}
+
+		pos = GetOrigin();
+		yaw = GetYawPitchRoll()[0];
+	}
 
 	// Get/Set Broadcast
 	// Setters must be call from autority (usualy server)
@@ -159,7 +208,8 @@ class PS_ManualMarker : GenericEntity
 	{
 		m_fWorldSize = worldSize;
 		
-		// Updated on next frame
+		if (m_wRoot)
+			UpdateMapWidget();
 	}
 	
 	string GetDescription()
@@ -194,7 +244,8 @@ class PS_ManualMarker : GenericEntity
 	{
 		m_bUseWorldScale = useWorldScale;
 		
-		// Updated on next frame
+		if (m_wRoot)
+			UpdateMapWidget();
 	}
 	
 	bool GetVisibleForEmptyFaction()
@@ -289,9 +340,33 @@ class PS_ManualMarker : GenericEntity
 		// Since every default direction marcers turned to right, -90° added to entity rotation
 		m_hManualMarkerComponent.SetSlot(screenXD, screenYD, sizeXD, sizeYD, trackedYaw - 90);
 	}
+
+	protected void OnRpl_ServerPos()
+	{
+		if (m_wRoot)
+			UpdateMapWidget();
+	}
+
+	// PostFrame runs after SCR_MapEntity.EOnFrame so map zoom/pan values are from the current frame.
+	override protected void EOnPostFrame(IEntity owner, float timeSlice)
+	{
+		UpdateMapWidget();
+	}
+
+	protected void OnMapZoom(float zoomVal)
+	{
+		UpdateMapWidget();
+	}
+
+	protected void OnMapPan(float panX, float panY, bool adjustedPan)
+	{
+		UpdateMapWidget();
+	}
 	
 	override protected void EOnInit(IEntity owner)
 	{		
+		RegisterInstance();
+
 		if (m_aVisibleForFactions == null)
 			m_aVisibleForFactions = new array<FactionKey>();
 		
@@ -373,10 +448,30 @@ class PS_ManualMarker : GenericEntity
 		m_hManualMarkerComponent.SetColor(m_MarkerColor);
 		m_hManualMarkerComponent.OnMouseLeave(null, null, 0, 0);
 		
-		// Enable every frame updating
-		GetGame().GetCallqueue().CallLater(UpdateMapWidget, 0, true);
+		// Sync immediately and keep updated on map zoom/pan and active entity post-frame.
+		UpdateMapWidget();
+		SetEventMask(EntityEvent.POSTFRAME);
+
+		ScriptInvokerFloat onMapZoom = SCR_MapEntity.GetOnMapZoom();
+		if (onMapZoom)
+			onMapZoom.Insert(OnMapZoom);
+
+		ScriptInvokerBase<ScriptInvokerFloat2Bool> onMapPan = SCR_MapEntity.GetOnMapPan();
+		if (onMapPan)
+			onMapPan.Insert(OnMapPan);
 	}
 	
+	protected void UnsubscribeMapTransformEvents()
+	{
+		ScriptInvokerFloat onMapZoom = SCR_MapEntity.GetOnMapZoom();
+		if (onMapZoom)
+			onMapZoom.Remove(OnMapZoom);
+
+		ScriptInvokerBase<ScriptInvokerFloat2Bool> onMapPan = SCR_MapEntity.GetOnMapPan();
+		if (onMapPan)
+			onMapPan.Remove(OnMapPan);
+	}
+
 	// Delete map widget
 	void DeleteMapWidget(MapConfiguration mapConfig)
 	{
@@ -388,9 +483,9 @@ class PS_ManualMarker : GenericEntity
 		m_wRoot = null;
 		m_hManualMarkerComponent = null;
 		
-		// Disable every frame updating
-		if (GetGame())
-			GetGame().GetCallqueue().Remove(UpdateMapWidget);
+		// Disable every frame updating and map transform listeners
+		ClearEventMask(EntityEvent.POSTFRAME);
+		UnsubscribeMapTransformEvents();
 	}
 	
 	void PS_ManualMarker(IEntitySource src, IEntity parent)
@@ -407,10 +502,12 @@ class PS_ManualMarker : GenericEntity
 	 */
 	void ~PS_ManualMarker()
 	{
+		if (s_aInstances)
+			s_aInstances.RemoveItem(this);
+
 		if (GetGame())
 		{
 			GetGame().GetCallqueue().Remove(UpdateTrackedPosition_S);
-			GetGame().GetCallqueue().Remove(UpdateMapWidget);
 			GetGame().GetCallqueue().Remove(CreateMapWidgetIfOpen_C);
 			GetGame().GetCallqueue().Remove(FactionsInit);
 		}
@@ -421,6 +518,8 @@ class PS_ManualMarker : GenericEntity
 			m_wRoot = null;
 		}
 		m_hManualMarkerComponent = null;
+
+		UnsubscribeMapTransformEvents();
 
 		if (m_MapEntity)
 		{
@@ -462,6 +561,9 @@ class PS_ManualMarker : GenericEntity
 		m_fServerYaw = yaw;
 		m_bHasServerPos = true;
 		Replication.BumpMe();
+
+		if (m_wRoot)
+			UpdateMapWidget();
 	}
 
 	protected void CreateMapWidgetIfOpen_C()
